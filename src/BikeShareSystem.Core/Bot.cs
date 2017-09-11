@@ -54,32 +54,21 @@ namespace BikeShareSystem
 
         private void Connected(TwitterContext twitterContext)
         {
-            ICancelable poll = null;
-            ReceiveAsync<Bot.Poll>(async _ =>
+            Receive<Bot.Poll>(_ =>
             {
-                var rateLimits = await twitterContext.Help
-                    .Where(help => help.Type == HelpType.RateLimits)
-                    .SingleOrDefaultAsync();
-
-                var limit = rateLimits.RateLimits["statuses"].Single(x => x.Resource == "/statuses/mentions_timeline");
-                var delay = TimeSpan.FromSeconds(5);
-                Console.WriteLine($"Remaining limit: {limit.Remaining}/{limit.Limit}");
-                if (limit.Remaining < 10)
-                {
-                    poll?.Cancel();
-                    var reset = DateTimeOffset.FromUnixTimeSeconds((long)limit.Reset);
-                    delay = reset - DateTimeOffset.Now;
-                }
-
-                var tweets = await twitterContext.Status
-                    .Where(tweet => tweet.Type == StatusType.Mentions)
-                    .Where(tweet => tweet.Text.Contains("challenge me"))
-                    .ToListAsync();
-
-                tweets.ForEach(Self.Tell);
-
-                Console.WriteLine($"Next poll in {delay}");
-                poll = Context.System.Scheduler.ScheduleTellOnceCancelable(delay, Self, new Bot.Poll(), Self);
+                var self = Self;
+                twitterContext.Streaming
+                    .Where(stream => stream.Type == StreamingType.User)
+                    .StartAsync(stream => {
+                        // Console.WriteLine($"stream: {stream.Content} ({stream.EntityType}, {stream.Entity?.GetType().FullName})");
+                        switch (stream.Entity)
+                        {
+                            case LinqToTwitter.Status tweet:
+                                self.Tell(tweet);
+                                break;
+                        }
+                        return Task.CompletedTask;
+                    });
             });
 
             Receive<LinqToTwitter.Status>(tweet =>
