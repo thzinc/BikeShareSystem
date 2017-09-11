@@ -9,7 +9,6 @@ namespace BikeShareSystem
 {
     public class Bot : ReceiveActor, IWithUnboundedStash
     {
-
         public class Poll { }
 
         public IStash Stash { get; set; }
@@ -54,29 +53,24 @@ namespace BikeShareSystem
 
         private void Connected(TwitterContext twitterContext)
         {
-            Receive<Bot.Poll>(_ =>
-            {
-                var self = Self;
-                twitterContext.Streaming
-                    .Where(stream => stream.Type == StreamingType.User)
-                    .StartAsync(stream => {
-                        // Console.WriteLine($"stream: {stream.Content} ({stream.EntityType}, {stream.Entity?.GetType().FullName})");
-                        switch (stream.Entity)
-                        {
-                            case LinqToTwitter.Status tweet:
-                                self.Tell(tweet);
-                                break;
-                        }
-                        return Task.CompletedTask;
-                    });
-            });
-
             Receive<LinqToTwitter.Status>(tweet =>
             {
                 Console.WriteLine($"{tweet.Text}");
             });
 
-            Self.Tell(new Bot.Poll());
+            var self = Self;
+            twitterContext.Streaming
+                .Where(stream => stream.Type == StreamingType.User)
+                .StartAsync(stream =>
+                {
+                    switch (stream.Entity)
+                    {
+                        case LinqToTwitter.Status tweet:
+                            self.Tell(tweet);
+                            break;
+                    }
+                    return Task.CompletedTask;
+                });
         }
     }
 }
