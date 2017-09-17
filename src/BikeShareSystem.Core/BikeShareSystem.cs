@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Device.Location;
 using System.Linq;
 using System.Threading.Tasks;
@@ -22,23 +23,28 @@ namespace BikeShareSystem
         {
             public GeoCoordinate From { get; set; }
             public GeoCoordinate To { get; set; }
+            public Settings.CircularArea AreaOfInterest { get; set; }
         }
 
         public class Challenge
         {
             public Station From { get; set; }
             public Station To { get; set; }
+            public string FromShortName { get; set; }
+            public string ToShortName { get; set; }
         }
 
         private ICancelable _stationInformationRefresh;
         private ICancelable _stationStatusRefresh;
+        private readonly Dictionary<string, string> _stationNameReplacements;
 
         private StationInformationData _stationInformation { get; set; } = new StationInformationData();
         private StationStatusData _stationStatus { get; set; } = new StationStatusData();
 
-        public BikeShareSystem(string manifestUrl)
+        public BikeShareSystem(Settings.BikeShareSystem settings)
         {
-            var client = GbfsClient.GetInstance(manifestUrl);
+            var client = GbfsClient.GetInstance(settings.ManifestUrl);
+            _stationNameReplacements = settings.StationNameReplacements;
             Become(() => Listening(client));
         }
 
@@ -122,12 +128,22 @@ namespace BikeShareSystem
 
             Receive<RequestChallenge>(request =>
             {
+                var stationStatuses = _stationStatus.Stations
+                    .Where(x => x.IsRenting && x.IsReturning && x.IsInstalled);
+
+                var areaOfInterest = new GeoCoordinate(request.AreaOfInterest.Center.Latitude, request.AreaOfInterest.Center.Longitude);
                 var all = _stationInformation.Stations
-                    .Join(_stationStatus.Stations, si => si.StationId, ss => ss.StationId, (si, ss) => new
+                    .Select(si => new
                     {
                         Coordinate = new GeoCoordinate(si.Lat, si.Lon),
                         Information = si,
-                        Status = ss,
+                    })
+                    .Where(x => x.Coordinate.GetDistanceTo(areaOfInterest) <= request.AreaOfInterest.Radius * 1000)
+                    .Join(stationStatuses, x => x.Information.StationId, ss => ss.StationId, (x, status) => new
+                    {
+                        x.Coordinate,
+                        x.Information,
+                        Status = status,
                     })
                     .ToList()
                     .AsEnumerable();
@@ -140,25 +156,37 @@ namespace BikeShareSystem
                         .OrderBy(x => x.Coordinate.GetDistanceTo(request.From))
                         .Take(5);
                 }
-                from = from.OrderBy(x => x.Status.NumDocksAvailable);
+                var fromStation = from
+                    .OrderBy(x => x.Status.NumBikesAvailable)
+                    .First();
 
-                var to = all;
+                var to = all.Where(x => x != fromStation);
                 if (request.To != null)
                 {
                     to = to
-                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.From))
+                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.To))
                         .Take(5);
                 }
                 to = to.OrderByDescending(x => x.Status.NumDocksAvailable);
+                var toStation = to.First();
 
                 Sender.Tell(new Challenge
                 {
-                    From = from.Select(x => x.Information).First(),
-                    To = to.Select(x => x.Information).First(),
+                    FromShortName = ShortenStationName(fromStation.Information.Name),
+                    From = fromStation.Information,
+                    ToShortName = ShortenStationName(toStation.Information.Name),
+                    To = toStation.Information,
                 });
             });
 
             Self.Tell(new RefreshManifest());
         }
+
+        private string ShortenStationName(string stationName)
+        {
+            return _stationNameReplacements.Aggregate(stationName, (sn, x) => sn.Replace(x.Key, x.Value));
+        }
+
+
     }
 }

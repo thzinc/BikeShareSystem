@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 
 namespace BikeShareSystem
@@ -12,6 +13,7 @@ namespace BikeShareSystem
         {
             public string SystemId { get; set; }
             public string ManifestUrl { get; set; }
+            public Dictionary<string, string> StationNameReplacements { get; set; } = new Dictionary<string, string>(StringComparer.CurrentCultureIgnoreCase);
         }
 
         public class Bot

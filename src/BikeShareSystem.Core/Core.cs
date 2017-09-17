@@ -13,7 +13,7 @@ namespace BikeShareSystem
         {
             settings.BikeShareSystems.ForEach(bss =>
                 Context.ActorOf(
-                    Props.Create(() => new BikeShareSystem(bss.ManifestUrl)),
+                    Props.Create(() => new BikeShareSystem(bss)),
                     bss.SystemId));
             
             settings.Bots.ForEach(bot =>

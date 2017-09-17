@@ -3,15 +3,20 @@ using System.Collections.Generic;
 using System.Device.Location;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Akka.Actor;
 using GoogleApi;
+using GoogleApi.Entities.Maps.Common.Enums;
+using GoogleApi.Entities.Maps.Directions.Request;
 using GoogleApi.Entities.Places.Search.Text.Request;
 using LinqToTwitter;
 
 namespace BikeShareSystem
 {
-    public class Conversation : ReceiveActor
+    public class Conversation : ReceiveActor, IWithUnboundedStash
     {
+        public IStash Stash { get; set; }
+
         private Settings.Bot _settings;
         private string _googleApiKey;
         public Conversation(Settings.Bot settings, string googleApiKey, TwitterContext twitterContext)
@@ -23,10 +28,13 @@ namespace BikeShareSystem
 
         private void Listening(TwitterContext twitterContext)
         {
+            var poisonPill = Context.System.Scheduler.ScheduleTellOnceCancelable(TimeSpan.FromMinutes(15), Self, PoisonPill.Instance, Self);
+
             Receive<LinqToTwitter.Status>(tweet =>
             {
                 if (tweet.Text.Contains("challenge"))
                 {
+                    poisonPill.Cancel();
                     Become(() => Challenging(twitterContext, tweet));
                 }
             });
@@ -34,18 +42,57 @@ namespace BikeShareSystem
 
         private void Challenging(TwitterContext twitterContext, LinqToTwitter.Status challengeTweet)
         {
-            // TODO: Get location
-            // TODO: Ask BikeShareSystem for challenge
-            // TODO: Get directions from Google
-            // TODO: Reply with challenge
-
             Receive<BikeShareSystem.Challenge>(challenge =>
             {
                 Console.WriteLine($"Go from {challenge.From.Name} to {challenge.To.Name}");
-                Context.Stop(Self);
+                var result = GoogleMaps.Directions.Query(new DirectionsRequest
+                {
+                    Key = _googleApiKey,
+                    Origin = new GoogleApi.Entities.Common.Location(challenge.From.Lat, challenge.From.Lon),
+                    Destination = new GoogleApi.Entities.Common.Location(challenge.To.Lat, challenge.To.Lon),
+                    TravelMode = TravelMode.Bicycling,
+                    Units = Units.Imperial,
+                });
+
+                if (result.Status.GetValueOrDefault() == GoogleApi.Entities.Common.Enums.Status.Ok)
+                {
+                    var leg = result.Routes
+                        .SelectMany(r => r.Legs)
+                        .FirstOrDefault();
+
+                    var start = challenge.FromShortName;
+                    var end = challenge.ToShortName;
+                    var distance = leg.Distance.Text;
+                    var duration = leg.Duration.Text;
+                    var link = $"https://www.google.com/maps/dir/?api=1&origin={challenge.From.Lat},{challenge.From.Lon}&destination={challenge.To.Lat},{challenge.To.Lon}&travelmode=bicycling";
+
+                    var status = _settings.Replies.Challenge.Messages
+                        .OrderBy(_ => Guid.NewGuid())
+                        .Select(template => template
+                            .Replace("{start}", start)
+                            .Replace("{end}", end)
+                            .Replace("{distance}", distance)
+                            .Replace("{duration}", duration)
+                            .Replace("{link}", link))
+                        .First();
+
+                    twitterContext.ReplyAsync(challengeTweet.StatusID, $"@{challengeTweet.User.ScreenNameResponse} {status}")
+                        .ContinueWith(task =>
+                        {
+                            Console.WriteLine($"Tweeted {task.Result.Text}");
+                            return true;
+                        },
+                        TaskContinuationOptions.ExecuteSynchronously)
+                        .PipeTo(Self);
+                }
+
+                Become(() => Listening(twitterContext));
+
+                Stash.UnstashAll();
             });
 
-            // TODO: Look for tweet location
+            ReceiveAny(_ => Stash.Stash());
+
             var coordinates = challengeTweet.Place?.BoundingBox?.Coordinates
                 .Select(c => new GeoCoordinate(c.Latitude, c.Longitude))
                 .ToList()
@@ -57,10 +104,9 @@ namespace BikeShareSystem
                 fromCoordinate = GetCentralGeoCoordinate(coordinates);
             }
 
-            // TODO: Look for "from"
             if (fromCoordinate == null)
             {
-                var pattern = new Regex(@"\bfrom\b\s+(?<Place>.*?)(to|$)", RegexOptions.IgnoreCase);
+                var pattern = new Regex(@"\bfrom\b\s+(?<Place>.*?)(\bto\b|$)", RegexOptions.IgnoreCase);
                 var match = pattern.Match(challengeTweet.Text);
                 if (match.Success)
                 {
@@ -84,10 +130,9 @@ namespace BikeShareSystem
                 }
             }
 
-            // TODO: Look for "to"
             if (toCoordinate == null)
             {
-                var pattern = new Regex(@"\bto\b\s+(?<Place>.*?)(from|$)", RegexOptions.IgnoreCase);
+                var pattern = new Regex(@"\bto\b\s+(?<Place>.*?)(\bfrom\b|$)", RegexOptions.IgnoreCase);
                 var match = pattern.Match(challengeTweet.Text);
                 if (match.Success)
                 {
@@ -114,13 +159,6 @@ namespace BikeShareSystem
             var dist = fromCoordinate != null && toCoordinate != null ? fromCoordinate.GetDistanceTo(toCoordinate) : double.NaN;
             Console.WriteLine($"From {fromCoordinate} to {toCoordinate} {dist}");
 
-            // twitterContext.ReplyAsync(challengeTweet.StatusID, $"@{challengeTweet.User.ScreenNameResponse} I'll challenge you soon...")
-            //     .ContinueWith(task =>
-            //     {
-            //         var tweet = task.Result;
-            //         return tweet;
-            //     })
-            //     .PipeTo(Self);
             var bikeShareSystems = _settings.BikeShareSystemIds.Select(systemId => Context.ActorSelection($"../../{systemId}"));
             foreach (var bikeShareSystem in bikeShareSystems)
             {
@@ -128,9 +166,9 @@ namespace BikeShareSystem
                 {
                     From = fromCoordinate,
                     To = toCoordinate,
+                    AreaOfInterest = _settings.AreaOfInterest,
                 });
             }
-            // Self.Tell(PoisonPill.Instance);
         }
 
         /// <remarks>
