@@ -18,7 +18,7 @@ namespace BikeShareSystem
             
             settings.Bots.ForEach(bot =>
                 Context.ActorOf(
-                    Props.Create(() => new Bot(bot)),
+                    Props.Create(() => new Bot(bot, settings.GoogleApiKey)),
                     bot.Twitter.ScreenName));
         }
     }

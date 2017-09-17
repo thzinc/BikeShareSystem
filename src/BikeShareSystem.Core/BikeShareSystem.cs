@@ -1,4 +1,5 @@
 using System;
+using System.Device.Location;
 using System.Linq;
 using System.Threading.Tasks;
 using Akka.Actor;
@@ -17,6 +18,17 @@ namespace BikeShareSystem
 
         public class RefreshStationInformation : RefreshStations { }
         public class RefreshStationStatus : RefreshStations { }
+        public class RequestChallenge
+        {
+            public GeoCoordinate From { get; set; }
+            public GeoCoordinate To { get; set; }
+        }
+
+        public class Challenge
+        {
+            public Station From { get; set; }
+            public Station To { get; set; }
+        }
 
         private ICancelable _stationInformationRefresh;
         private ICancelable _stationStatusRefresh;
@@ -106,6 +118,44 @@ namespace BikeShareSystem
 
                 _stationStatus = tuple.StationStatus.Data;
                 Console.WriteLine($"Station status count: {_stationStatus.Stations.Count}");
+            });
+
+            Receive<RequestChallenge>(request =>
+            {
+                var all = _stationInformation.Stations
+                    .Join(_stationStatus.Stations, si => si.StationId, ss => ss.StationId, (si, ss) => new
+                    {
+                        Coordinate = new GeoCoordinate(si.Lat, si.Lon),
+                        Information = si,
+                        Status = ss,
+                    })
+                    .ToList()
+                    .AsEnumerable();
+
+                // if a from/to is given, find 5 nearest stations and pick fullest/emptiest
+                var from = all;
+                if (request.From != null)
+                {
+                    from = from
+                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.From))
+                        .Take(5);
+                }
+                from = from.OrderBy(x => x.Status.NumDocksAvailable);
+
+                var to = all;
+                if (request.To != null)
+                {
+                    to = to
+                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.From))
+                        .Take(5);
+                }
+                to = to.OrderByDescending(x => x.Status.NumDocksAvailable);
+
+                Sender.Tell(new Challenge
+                {
+                    From = from.Select(x => x.Information).First(),
+                    To = to.Select(x => x.Information).First(),
+                });
             });
 
             Self.Tell(new RefreshManifest());

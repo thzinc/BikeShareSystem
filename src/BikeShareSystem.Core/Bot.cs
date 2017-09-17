@@ -1,8 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Akka.Actor;
+using GoogleApi.Entities.Places.Search.Common.Enums;
+using GoogleApi.Entities.Places.Search.NearBy.Request;
 using LinqToTwitter;
 
 namespace BikeShareSystem
@@ -14,9 +14,11 @@ namespace BikeShareSystem
         public IStash Stash { get; set; }
 
         private Settings.Bot _settings;
-        public Bot(Settings.Bot settings)
+        private string _googleApiKey;
+        public Bot(Settings.Bot settings, string googleApiKey)
         {
             _settings = settings;
+            _googleApiKey = googleApiKey;
             Become(Authorizing);
         }
 
@@ -55,18 +57,28 @@ namespace BikeShareSystem
         {
             Receive<LinqToTwitter.Status>(tweet =>
             {
-                Console.WriteLine($"{tweet.Text}");
+                var fromScreenName = tweet.User.ScreenNameResponse;
+
+                var conversation = Context.Child(fromScreenName);
+                if (Equals(conversation, ActorRefs.Nobody))
+                {
+                    conversation = Context.ActorOf(Props.Create(() => new Conversation(_settings, _googleApiKey, twitterContext)), fromScreenName);
+                }
+                conversation.Tell(tweet);
             });
 
             var self = Self;
             twitterContext.Streaming
-                .Where(stream => stream.Type == StreamingType.User)
+                .Where(stream => stream.Type == StreamingType.User && stream.AllReplies)
                 .StartAsync(stream =>
                 {
                     switch (stream.Entity)
                     {
                         case LinqToTwitter.Status tweet:
-                            self.Tell(tweet);
+                            if (tweet.User.ScreenNameResponse != _settings.Twitter.ScreenName)
+                            {
+                                self.Tell(tweet);
+                            }
                             break;
                     }
                     return Task.CompletedTask;
