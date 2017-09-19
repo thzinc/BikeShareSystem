@@ -23,6 +23,10 @@ namespace BikeShareSystem
                 Console.Write("Starting BikeShareSystem.Core...");
                 runner.Start();
                 AssemblyLoadContext.Default.Unloading += _ => runner.Stop();
+                Console.CancelKeyPress += (_, ea) => {
+                    runner.Stop();
+                    ea.Cancel = true;
+                };
                 Console.WriteLine(" started!");
 
                 runner.Wait();

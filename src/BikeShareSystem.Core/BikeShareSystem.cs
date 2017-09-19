@@ -34,6 +34,18 @@ namespace BikeShareSystem
             public string ToShortName { get; set; }
         }
 
+        public class RequestStatus
+        {
+            public Settings.CircularArea AreaOfInterest { get; set; }
+        }
+
+        public class Status
+        {
+            public int Bikes { get; set; }
+            public int Docks { get; set; }
+            public int Stations { get; set; }
+        }
+
         private ICancelable _stationInformationRefresh;
         private ICancelable _stationStatusRefresh;
         private readonly Dictionary<string, string> _stationNameReplacements;
@@ -54,16 +66,7 @@ namespace BikeShareSystem
             {
                 _stationInformationRefresh?.Cancel();
                 _stationStatusRefresh?.Cancel();
-                client.GetManifest()
-                    .ContinueWith(manifestTask =>
-                    {
-                        var manifest = manifestTask.Result;
-                        Console.WriteLine($"Got manifest with TTL of {manifest.TimeToLive}");
-
-                        return manifest;
-                    },
-                    TaskContinuationOptions.ExecuteSynchronously)
-                .PipeTo(Self);
+                client.GetManifest().PipeTo(Self);
             });
 
             Receive<Manifest>(manifest =>
@@ -114,7 +117,6 @@ namespace BikeShareSystem
                 _stationInformationRefresh = Context.System.Scheduler.ScheduleTellOnceCancelable(delay, Self, tuple.Refresh, Self);
 
                 _stationInformation = tuple.StationInformation.Data;
-                Console.WriteLine($"Station information count: {_stationInformation.Stations.Count}");
             });
 
             Receive<(RefreshStationStatus Refresh, StationStatus StationStatus)>(tuple =>
@@ -123,7 +125,6 @@ namespace BikeShareSystem
                 _stationStatusRefresh = Context.System.Scheduler.ScheduleTellOnceCancelable(delay, Self, tuple.Refresh, Self);
 
                 _stationStatus = tuple.StationStatus.Data;
-                Console.WriteLine($"Station status count: {_stationStatus.Stations.Count}");
             });
 
             Receive<RequestChallenge>(request =>
@@ -179,14 +180,42 @@ namespace BikeShareSystem
                 });
             });
 
+            Receive<RequestStatus>(request =>
+            {
+                var stationStatuses = _stationStatus.Stations
+                    .Where(x => x.IsRenting && x.IsReturning && x.IsInstalled);
+
+                var areaOfInterest = new GeoCoordinate(request.AreaOfInterest.Center.Latitude, request.AreaOfInterest.Center.Longitude);
+                var all = _stationInformation.Stations
+                    .Select(si => new
+                    {
+                        Coordinate = new GeoCoordinate(si.Lat, si.Lon),
+                        Information = si,
+                    })
+                    .Where(x => x.Coordinate.GetDistanceTo(areaOfInterest) <= request.AreaOfInterest.Radius * 1000)
+                    .Join(stationStatuses, x => x.Information.StationId, ss => ss.StationId, (x, status) => new
+                    {
+                        x.Coordinate,
+                        x.Information,
+                        Status = status,
+                    })
+                    .ToList();
+                
+                Sender.Tell(new Status{
+                    Bikes = all.Sum(x => x.Status.NumBikesAvailable),
+                    Docks = all.Sum(x => x.Status.NumDocksAvailable),
+                    Stations = all.Count,
+                });
+            });
+
             Self.Tell(new RefreshManifest());
         }
 
         private string ShortenStationName(string stationName)
         {
+            if (_stationNameReplacements.Count == 0) return stationName;
+
             return _stationNameReplacements.Aggregate(stationName, (sn, x) => sn.Replace(x.Key, x.Value));
         }
-
-
     }
 }
