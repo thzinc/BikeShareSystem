@@ -9,7 +9,7 @@ namespace BikeShareSystem
 {
     public class Bot : ReceiveActor, IWithUnboundedStash
     {
-        public class Poll { }
+        public class Reconnect { }
 
         public IStash Stash { get; set; }
 
@@ -67,9 +67,14 @@ namespace BikeShareSystem
                 conversation.Tell(tweet);
             });
 
+            Receive<Reconnect>(_ =>
+            {
+                Become(() => Connected(twitterContext));
+            });
+
             var self = Self;
             twitterContext.Streaming
-                .Where(stream => stream.Type == StreamingType.User && stream.AllReplies)
+                .Where(stream => stream.Type == StreamingType.User && stream.AllReplies == true)
                 .StartAsync(stream =>
                 {
                     switch (stream.Entity)
@@ -81,8 +86,11 @@ namespace BikeShareSystem
                             }
                             break;
                     }
+
                     return Task.CompletedTask;
-                });
+                })
+                .ContinueWith(_ => new Reconnect())
+                .PipeTo(Self);
         }
     }
 }

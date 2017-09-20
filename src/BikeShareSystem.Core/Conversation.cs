@@ -87,7 +87,7 @@ namespace BikeShareSystem
                     var leg = result.Routes
                         .SelectMany(r => r.Legs)
                         .FirstOrDefault();
-                    string status = BuildStatus(challenge, leg);
+                    string status = BuildChallengeTweet(challenge, leg);
 
                     twitterContext.ReplyAsync(challengeTweet.StatusID, $"@{challengeTweet.User.ScreenNameResponse} {status}")
                         .ContinueWith(task =>
@@ -135,7 +135,7 @@ namespace BikeShareSystem
             }
         }
 
-        private string BuildStatus(BikeShareSystem.Challenge challenge, GoogleApi.Entities.Maps.Directions.Response.Leg leg)
+        private string BuildChallengeTweet(BikeShareSystem.Challenge challenge, GoogleApi.Entities.Maps.Directions.Response.Leg leg)
         {
             var start = challenge.FromShortName;
             var end = challenge.ToShortName;
