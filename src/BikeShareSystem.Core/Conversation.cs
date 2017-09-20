@@ -32,12 +32,13 @@ namespace BikeShareSystem
 
             Receive<LinqToTwitter.Status>(tweet =>
             {
-                if (tweet.Text.Contains("challenge"))
+                // TODO: Replace with call to Wit.ai / NLP
+                if (tweet.Text.ToLowerInvariant().Contains("challenge"))
                 {
                     poisonPill.Cancel();
                     Become(() => Challenging(twitterContext, tweet));
                 }
-                else if (new[] {"how", "system"}.All(tweet.Text.Contains))
+                else if (new[] {"how", "system"}.All(tweet.Text.ToLowerInvariant().Contains))
                 {
                     poisonPill.Cancel();
                     Become(() => GettingBikeShareSystemInfo(twitterContext, tweet));
