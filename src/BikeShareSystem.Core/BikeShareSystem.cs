@@ -158,7 +158,7 @@ namespace BikeShareSystem
                         .Take(5);
                 }
                 var fromStation = from
-                    .OrderBy(x => x.Status.NumBikesAvailable)
+                    .OrderByDescending(x => x.Status.NumBikesAvailable)
                     .First();
 
                 var to = all.Where(x => x != fromStation);
