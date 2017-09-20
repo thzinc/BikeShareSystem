@@ -80,7 +80,7 @@ namespace BikeShareSystem
                     switch (stream.Entity)
                     {
                         case LinqToTwitter.Status tweet:
-                            if (tweet.User.ScreenNameResponse != _settings.Twitter.ScreenName)
+                            if (tweet.User.ScreenNameResponse != _settings.Twitter.ScreenName && tweet.InReplyToScreenName == _settings.Twitter.ScreenName)
                             {
                                 self.Tell(tweet);
                             }
