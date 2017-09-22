@@ -140,36 +140,16 @@ namespace BikeShareSystem
                         Information = si,
                     })
                     .Where(x => x.Coordinate.GetDistanceTo(areaOfInterest) <= request.AreaOfInterest.Radius * 1000)
-                    .Join(stationStatuses, x => x.Information.StationId, ss => ss.StationId, (x, status) => new
-                    {
-                        x.Coordinate,
-                        x.Information,
-                        Status = status,
-                    })
+                    .Join(stationStatuses, x => x.Information.StationId, ss => ss.StationId, (x, status) => (
+                        Coordinate: x.Coordinate,
+                        Information: x.Information,
+                        Status: status
+                    ))
                     .ToList()
                     .AsEnumerable();
 
-                // if a from/to is given, find 5 nearest stations and pick fullest/emptiest
-                var from = all;
-                if (request.From != null)
-                {
-                    from = from
-                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.From))
-                        .Take(5);
-                }
-                var fromStation = from
-                    .OrderBy(x => x.Status.NumBikesAvailable)
-                    .First();
-
-                var to = all.Where(x => x != fromStation);
-                if (request.To != null)
-                {
-                    to = to
-                        .OrderBy(x => x.Coordinate.GetDistanceTo(request.To))
-                        .Take(5);
-                }
-                to = to.OrderByDescending(x => x.Status.NumDocksAvailable);
-                var toStation = to.First();
+                var fromStation = GetCoordinate(all, request.From, x => x.NumBikesAvailable);
+                var toStation = GetCoordinate(all, request.To, x => x.NumDocksAvailable, fromStation.Information);
 
                 Sender.Tell(new Challenge
                 {
@@ -200,8 +180,9 @@ namespace BikeShareSystem
                         Status = status,
                     })
                     .ToList();
-                
-                Sender.Tell(new Status{
+
+                Sender.Tell(new Status
+                {
                     Bikes = all.Sum(x => x.Status.NumBikesAvailable),
                     Docks = all.Sum(x => x.Status.NumDocksAvailable),
                     Stations = all.Count,
@@ -216,6 +197,44 @@ namespace BikeShareSystem
             if (_stationNameReplacements.Count == 0) return stationName;
 
             return _stationNameReplacements.Aggregate(stationName, (sn, x) => sn.Replace(x.Key, x.Value));
+        }
+
+        private static (GeoCoordinate Coordinate, Station Information, Gbfs.Net.v1.Status Status) GetCoordinate<TOrderBy>(
+            IEnumerable<(GeoCoordinate Coordinate, Station Information, Gbfs.Net.v1.Status Status)> stations,
+            GeoCoordinate referencePoint,
+            Func<Gbfs.Net.v1.Status, TOrderBy> orderBySelector,
+            Station excludedStation = null)
+        {
+            var selectedStations = stations;
+
+            if (excludedStation != null) {
+                selectedStations = selectedStations.Where(x => x.Information != excludedStation);
+            }
+
+            if (referencePoint != null)
+            {
+                var nearestStations = selectedStations
+                    .Select(x => (Distance: x.Coordinate.GetDistanceTo(referencePoint), Item: x))
+                    .OrderBy(x => x.Distance)
+                    .Take(5)
+                    .ToList()
+                    .AsEnumerable();
+
+                var maxNearbyInMeters = 500;
+                var min = nearestStations.Min(x => x.Distance);
+                var range = nearestStations.Max(x => x.Distance) - min;
+                if (range > maxNearbyInMeters)
+                {
+                    nearestStations = nearestStations.Where(x => x.Distance <= min + maxNearbyInMeters);
+                }
+
+                selectedStations = nearestStations.Select(x => x.Item);
+            }
+            var selectedStation = selectedStations
+                .OrderByDescending(x => orderBySelector(x.Status))
+                .First();
+
+            return selectedStation;
         }
     }
 }
